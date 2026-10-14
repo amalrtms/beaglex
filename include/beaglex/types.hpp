@@ -1,7 +1,10 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
+#include <vector>
 
 namespace beaglex {
 
@@ -55,6 +58,39 @@ struct Trade {
 
     bool operator==(const Trade&) const = default;
 };
+
+struct RestingOrder {
+    OrderId id = 0;
+    TraderId trader = 0;
+    Side side = Side::Buy;
+    Price price = 0;
+    Qty remaining = 0;
+};
+
+struct LevelView {
+    Price price = 0;
+    Qty qty = 0;
+    std::size_t orders = 0;
+
+    bool operator==(const LevelView&) const = default;
+};
+
+// Outcome of a submit or modify. `Trades` is either an owning std::vector or a
+// non-owning std::span into a buffer the book reuses between calls.
+template <class Trades>
+struct BasicSubmitResult {
+    RejectReason reject = RejectReason::None;
+    Qty filled = 0;    // executed immediately
+    Qty resting = 0;   // left in the book
+    Qty cancelled = 0; // unfilled remainder discarded (Market / IOC)
+    Trades trades{};
+
+    bool accepted() const noexcept { return reject == RejectReason::None; }
+};
+
+// `trades` is valid until the next mutating call on the same book.
+using SubmitResult = BasicSubmitResult<std::span<const Trade>>;
+using OwningSubmitResult = BasicSubmitResult<std::vector<Trade>>;
 
 const char* to_string(Side s) noexcept;
 const char* to_string(OrderType t) noexcept;

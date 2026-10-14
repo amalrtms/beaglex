@@ -1,7 +1,6 @@
-﻿#include "beaglex/order_book.hpp"
+#include "beaglex/order_book.hpp"
 
 #include <algorithm>
-#include <iterator>
 
 namespace beaglex {
 
@@ -11,7 +10,43 @@ bool crosses(Side taker_side, Price limit, Price resting) noexcept {
     return taker_side == Side::Buy ? limit >= resting : limit <= resting;
 }
 
+// True if `a` is a strictly better price than `b` for resting orders on `side`.
+bool better(Side side, Price a, Price b) noexcept {
+    return side == Side::Buy ? a > b : a < b;
+}
+
 } // namespace
+
+void OrderBook::reserve(std::size_t orders) {
+    nodes_.reserve(orders);
+    free_.reserve(orders);
+    index_.reserve(orders);
+    bids_.reserve(1024);
+    asks_.reserve(1024);
+}
+
+std::size_t OrderBook::locate(const Levels& levels, Side side, Price price) noexcept {
+    // Linear scan from the best end. Activity concentrates near the touch, so
+    // this usually stops within a few levels, and a deeper insert has to shift
+    // that many elements anyway.
+    std::size_t pos = levels.size();
+    while (pos > 0 && better(side, levels[pos - 1].price, price)) {
+        --pos;
+    }
+    return pos;
+}
+
+OrderBook::Level* OrderBook::find_level(Side side, Price price) {
+    Levels& levels = side_levels(side);
+    const std::size_t pos = locate(levels, side, price);
+    return pos > 0 && levels[pos - 1].price == price ? &levels[pos - 1] : nullptr;
+}
+
+const OrderBook::Level* OrderBook::find_level(Side side, Price price) const {
+    const Levels& levels = side_levels(side);
+    const std::size_t pos = locate(levels, side, price);
+    return pos > 0 && levels[pos - 1].price == price ? &levels[pos - 1] : nullptr;
+}
 
 SubmitResult OrderBook::submit(const NewOrder& order) {
     SubmitResult result;
@@ -29,8 +64,9 @@ SubmitResult OrderBook::submit(const NewOrder& order) {
         return result;
     }
 
-    const Qty remaining = order.side == Side::Buy ? match(asks_, order, result.trades)
-                                                  : match(bids_, order, result.trades);
+    trades_.clear(); // keeps capacity: no allocation once warmed up
+    const Qty remaining = match(order);
+    result.trades = trades_;
     result.filled = order.qty - remaining;
 
     if (remaining > 0) {
@@ -44,31 +80,30 @@ SubmitResult OrderBook::submit(const NewOrder& order) {
     return result;
 }
 
-template <class Book>
-Qty OrderBook::match(Book& opposite, const NewOrder& taker, std::vector<Trade>& trades) {
+Qty OrderBook::match(const NewOrder& taker) {
+    Levels& book = side_levels(opposite(taker.side));
     Qty remaining = taker.qty;
     const bool any_price = taker.type == OrderType::Market;
 
-    while (remaining > 0 && !opposite.empty()) {
-        auto level_it = opposite.begin();
-        const Price level_price = level_it->first;
-        if (!any_price && !crosses(taker.side, taker.price, level_price)) {
+    while (remaining > 0 && !book.empty()) {
+        Level& level = book.back();
+        if (!any_price && !crosses(taker.side, taker.price, level.price)) {
             break;
         }
 
-        Level& level = level_it->second;
-        while (remaining > 0 && !level.queue.empty()) {
-            RestingOrder& maker = level.queue.front();
+        while (remaining > 0 && level.head != kNull) {
+            const NodeIdx n = level.head;
+            Node& maker = nodes_[n];
             const Qty qty = std::min(remaining, maker.remaining);
 
-            trades.push_back(Trade{
+            trades_.push_back(Trade{
                 .seq = next_trade_seq_++,
                 .maker_id = maker.id,
                 .taker_id = taker.id,
                 .maker_trader = maker.trader,
                 .taker_trader = taker.trader,
                 .taker_side = taker.side,
-                .price = level_price,
+                .price = level.price,
                 .qty = qty,
             });
 
@@ -77,51 +112,93 @@ Qty OrderBook::match(Book& opposite, const NewOrder& taker, std::vector<Trade>& 
             level.total -= qty;
             if (maker.remaining == 0) {
                 index_.erase(maker.id);
-                level.queue.pop_front();
+                unlink(level, n);
             }
         }
 
-        if (level.queue.empty()) {
-            opposite.erase(level_it);
+        if (level.head == kNull) {
+            book.pop_back();
         }
     }
     return remaining;
 }
 
-void OrderBook::rest(const NewOrder& order, Qty qty) {
-    Level& level = with_book(order.side, [&](auto& book) -> Level& { return book[order.price]; });
-    level.queue.push_back(RestingOrder{order.id, order.trader, order.side, order.price, qty});
-    level.total += qty;
-    index_.emplace(order.id, Locator{order.side, order.price, std::prev(level.queue.end())});
+OrderBook::NodeIdx OrderBook::alloc_node() {
+    if (!free_.empty()) {
+        const NodeIdx n = free_.back();
+        free_.pop_back();
+        return n;
+    }
+    nodes_.emplace_back();
+    return static_cast<NodeIdx>(nodes_.size() - 1);
 }
 
-void OrderBook::unlink(const Locator& loc) {
-    with_book(loc.side, [&](auto& book) {
-        auto level_it = book.find(loc.price);
-        Level& level = level_it->second;
-        level.total -= loc.it->remaining;
-        level.queue.erase(loc.it);
-        if (level.queue.empty()) {
-            book.erase(level_it);
-        }
-    });
+// Removes node `n` from its level's queue and returns its slot to the pool.
+// Does not adjust level.total; callers account for the quantity themselves.
+void OrderBook::unlink(Level& level, NodeIdx n) {
+    const Node& node = nodes_[n];
+    if (node.prev != kNull) {
+        nodes_[node.prev].next = node.next;
+    } else {
+        level.head = node.next;
+    }
+    if (node.next != kNull) {
+        nodes_[node.next].prev = node.prev;
+    } else {
+        level.tail = node.prev;
+    }
+    --level.count;
+    free_.push_back(n);
+}
+
+void OrderBook::rest(const NewOrder& order, Qty qty) {
+    const NodeIdx n = alloc_node(); // may grow nodes_, so take no references before this
+
+    Levels& levels = side_levels(order.side);
+    const std::size_t pos = locate(levels, order.side, order.price);
+    Level* level = nullptr;
+    if (pos > 0 && levels[pos - 1].price == order.price) {
+        level = &levels[pos - 1];
+    } else {
+        level = &*levels.insert(levels.begin() + static_cast<std::ptrdiff_t>(pos), Level{.price = order.price});
+    }
+
+    nodes_[n] = Node{order.id, order.price, qty, order.trader, order.side, level->tail, kNull};
+    if (level->tail != kNull) {
+        nodes_[level->tail].next = n;
+    } else {
+        level->head = n;
+    }
+    level->tail = n;
+    ++level->count;
+    level->total += qty;
+    index_.insert(order.id, n);
 }
 
 bool OrderBook::cancel(OrderId id) {
-    auto it = index_.find(id);
-    if (it == index_.end()) {
+    const NodeIdx n = index_.find(id);
+    if (n == detail::OrderIndex::kNotFound) {
         return false;
     }
-    unlink(it->second);
-    index_.erase(it);
+    const Node& node = nodes_[n];
+    Levels& levels = side_levels(node.side);
+    const std::size_t pos = locate(levels, node.side, node.price) - 1; // level must exist
+    Level& level = levels[pos];
+
+    level.total -= node.remaining;
+    unlink(level, n);
+    if (level.head == kNull) {
+        levels.erase(levels.begin() + static_cast<std::ptrdiff_t>(pos));
+    }
+    index_.erase(id);
     return true;
 }
 
 SubmitResult OrderBook::modify(OrderId id, Price new_price, Qty new_qty) {
     SubmitResult result;
 
-    auto it = index_.find(id);
-    if (it == index_.end()) {
+    const NodeIdx n = index_.find(id);
+    if (n == detail::OrderIndex::kNotFound) {
         result.reject = RejectReason::UnknownOrder;
         return result;
     }
@@ -134,20 +211,18 @@ SubmitResult OrderBook::modify(OrderId id, Price new_price, Qty new_qty) {
         return result;
     }
 
-    const Locator loc = it->second;
-    RestingOrder& order = *loc.it;
+    Node& node = nodes_[n];
 
     // Pure size reduction: keep the order's place in the queue.
-    if (new_price == loc.price && new_qty <= order.remaining) {
-        const Qty delta = order.remaining - new_qty;
-        with_book(loc.side, [&](auto& book) { book.find(loc.price)->second.total -= delta; });
-        order.remaining = new_qty;
+    if (new_price == node.price && new_qty <= node.remaining) {
+        find_level(node.side, node.price)->total -= node.remaining - new_qty;
+        node.remaining = new_qty;
         result.resting = new_qty;
         return result;
     }
 
     // Otherwise cancel/replace: loses priority and may cross the spread.
-    const NewOrder replacement{id, order.trader, order.side, OrderType::Limit, new_price, new_qty};
+    const NewOrder replacement{id, node.trader, node.side, OrderType::Limit, new_price, new_qty};
     cancel(id);
     return submit(replacement);
 }
@@ -156,39 +231,37 @@ std::optional<Price> OrderBook::best_bid() const {
     if (bids_.empty()) {
         return std::nullopt;
     }
-    return bids_.begin()->first;
+    return bids_.back().price;
 }
 
 std::optional<Price> OrderBook::best_ask() const {
     if (asks_.empty()) {
         return std::nullopt;
     }
-    return asks_.begin()->first;
+    return asks_.back().price;
 }
 
 Qty OrderBook::depth_at(Side side, Price price) const {
-    return with_book(side, [&](const auto& book) -> Qty {
-        auto it = book.find(price);
-        return it == book.end() ? 0 : it->second.total;
-    });
+    const Level* level = find_level(side, price);
+    return level ? level->total : 0;
 }
 
 std::vector<LevelView> OrderBook::levels(Side side, std::size_t max_levels) const {
+    const Levels& levels = side_levels(side);
     std::vector<LevelView> out;
-    with_book(side, [&](const auto& book) {
-        for (const auto& [price, level] : book) {
-            if (out.size() >= max_levels) {
-                break;
-            }
-            out.push_back(LevelView{price, level.total, level.queue.size()});
-        }
-    });
+    for (auto it = levels.rbegin(); it != levels.rend() && out.size() < max_levels; ++it) {
+        out.push_back(LevelView{it->price, it->total, it->count});
+    }
     return out;
 }
 
-const RestingOrder* OrderBook::find(OrderId id) const {
-    auto it = index_.find(id);
-    return it == index_.end() ? nullptr : &*it->second.it;
+std::optional<RestingOrder> OrderBook::find(OrderId id) const {
+    const NodeIdx idx = index_.find(id);
+    if (idx == detail::OrderIndex::kNotFound) {
+        return std::nullopt;
+    }
+    const Node& n = nodes_[idx];
+    return RestingOrder{n.id, n.trader, n.side, n.price, n.remaining};
 }
 
 } // namespace beaglex

@@ -3,9 +3,9 @@
 // A deliberately naive order book used as a test oracle. It keeps every
 // resting order in one flat vector and linearly scans for the best match on
 // every step. Slow, but simple enough to be obviously correct, so the real
-// OrderBook can be fuzzed against it.
+// order books can be fuzzed against it.
 
-#include "beaglex/order_book.hpp"
+#include "beaglex/types.hpp"
 
 #include <algorithm>
 #include <map>
@@ -30,8 +30,8 @@ namespace beaglex::test {
 
 class ReferenceBook {
 public:
-    SubmitResult submit(const NewOrder& o) {
-        SubmitResult r;
+    OwningSubmitResult submit(const NewOrder& o) {
+        OwningSubmitResult r;
         if (o.qty <= 0) {
             r.reject = RejectReason::InvalidQuantity;
             return r;
@@ -86,8 +86,8 @@ public:
         return true;
     }
 
-    SubmitResult modify(OrderId id, Price new_price, Qty new_qty) {
-        SubmitResult r;
+    OwningSubmitResult modify(OrderId id, Price new_price, Qty new_qty) {
+        OwningSubmitResult r;
         const int i = find_index(id);
         if (i < 0) {
             r.reject = RejectReason::UnknownOrder;

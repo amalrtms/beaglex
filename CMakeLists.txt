@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(BGX_BUILD_TESTS "Build unit and fuzz tests" ON)
+option(BGX_BUILD_BENCH "Build the order book benchmark" ON)
 
 if(MSVC)
     add_compile_options(/W4 /permissive- /utf-8)
@@ -15,12 +16,18 @@ endif()
 
 add_library(beaglex
     src/order_book.cpp
+    src/baseline_order_book.cpp
     src/types.cpp
 )
 target_include_directories(beaglex PUBLIC include)
 
 add_executable(beaglex_demo apps/demo.cpp)
 target_link_libraries(beaglex_demo PRIVATE beaglex)
+
+if(BGX_BUILD_BENCH)
+    add_executable(beaglex_bench bench/bench.cpp)
+    target_link_libraries(beaglex_bench PRIVATE beaglex)
+endif()
 
 if(BGX_BUILD_TESTS)
     include(FetchContent)
@@ -36,6 +43,7 @@ if(BGX_BUILD_TESTS)
     add_executable(beaglex_tests
         tests/order_book_test.cpp
         tests/fuzz_test.cpp
+        tests/order_index_test.cpp
     )
     target_link_libraries(beaglex_tests PRIVATE beaglex GTest::gtest_main)
     include(GoogleTest)

@@ -1,4 +1,4 @@
-﻿# Beaglex
+# Beaglex
 
 An agent-based market simulator in C++20 for studying how trading strategies
 co-evolve inside a realistic limit order book.
@@ -17,12 +17,28 @@ profitability. See [Limitations](#limitations).
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1 | Matching engine: limit / market / IOC, cancel, modify, price-time priority | âœ… |
-| 2 | Latency & throughput benchmarks, data-structure optimisation | â³ |
-| 3 | Simulation loop with hand-coded agents (market makers, momentum, noise traders), fees, latency | â³ |
-| 4 | Validation against empirical stylized facts (fat tails, volatility clustering, â€¦) | â³ |
-| 5 | Genetic evolution of agent strategies | â³ |
-| 6 | Experiments and write-up | â³ |
+| 1 | Matching engine: limit / market / IOC, cancel, modify, price-time priority | ✅ |
+| 2 | Latency & throughput benchmarks, data-structure optimisation | ✅ |
+| 3 | Simulation loop with hand-coded agents (market makers, momentum, noise traders), fees, latency | ⏳ |
+| 4 | Validation against empirical stylized facts (fat tails, volatility clustering, …) | ⏳ |
+| 5 | Genetic evolution of agent strategies | ⏳ |
+| 6 | Experiments and write-up | ⏳ |
+
+## Performance
+
+On a realistic synthetic order flow (2M operations, ~8,600 resting orders),
+single core of an Intel i7-14650HX laptop:
+
+| Book | Throughput | p50 | p99 | p99.9 |
+|---|---:|---:|---:|---:|
+| Baseline (`std::map` / `std::list` / `std::unordered_map`) | 6.1 M ops/s | 153 ns | 560 ns | 930 ns |
+| Optimised `OrderBook` | **15.2 M ops/s** | **68 ns** | **205 ns** | **330 ns** |
+
+**2.5x throughput and 2.7x lower p99 latency**, with zero heap allocation on
+the hot path. The gain came from four measured steps: a reused trade buffer, a
+pooled intrusive order queue, a custom open-addressing hash index, and
+contiguous price levels. Method, workload, per-step results and caveats are in
+[docs/benchmarks.md](docs/benchmarks.md).
 
 ## Matching engine
 
@@ -36,28 +52,35 @@ profitability. See [Limitations](#limitations).
   given input sequence always yields identical trades. This matters for
   reproducible simulation experiments.
 
-The current book uses `std::map` price levels with a `std::list` FIFO per level
-and a hash index for O(1) cancels. It is intentionally the straightforward
-baseline; Phase 2 benchmarks and optimises against it.
+Two implementations share one interface. `OrderBook` is the optimised engine.
+`BaselineOrderBook` is the original straightforward version, kept as the
+benchmark reference and as a second implementation for testing.
 
 ## Correctness
 
-Besides unit tests, the engine is **differentially fuzzed** against a
-deliberately naive reference book (`tests/reference_book.hpp`) that linearly
-scans every order on every match. Both receive the same random stream of
-submits, cancels and modifies (including invalid ones), and every result,
-trade and book level must match after every operation. The fuzz test also
-checks that the book is never left crossed.
+Both books are **differentially fuzzed** against a deliberately naive
+reference book ([`tests/reference_book.hpp`](tests/reference_book.hpp)) that
+linearly scans every order on every match. All receive the same random stream
+of submits, cancels and modifies (including invalid ones), and every result,
+trade and book level must match after every operation. Two fuzz profiles run:
+a narrow price band where the book crosses constantly, and a wide one that grows
+the book to thousands of orders across hundreds of levels. The fuzz test also
+checks that the book is never left crossed. The custom hash index has its own
+differential test against `std::unordered_map`.
+
+The fuzz tests were checked by planting a bug (trades priced at the taker's
+price instead of the maker's); it was caught within 22 operations.
 
 ## Building (Windows, MSVC)
 
 Requires Visual Studio 2022+ or Build Tools with the C++ workload (includes CMake and Ninja).
 
 ```powershell
-.\build.ps1                 # Release build with tests
-.\build.ps1 -NoTests        # skip GoogleTest (no download)
-.\build\release\beaglex_demo.exe
-.\build\release\beaglex_tests.exe
+.\build.ps1                          # Release build: library, demo, tests, benchmark
+.\build.ps1 -NoTests                 # skip GoogleTest (no download)
+.\build\release\beaglex_demo.exe     # walk through a sweep and a market order
+.\build\release\beaglex_tests.exe    # unit + fuzz tests
+.\build\release\beaglex_bench.exe    # throughput and latency comparison
 ```
 
 ## Limitations
@@ -68,12 +91,15 @@ Stated up front so results are read in the right light:
 - No real market data yet; the agents generate all order flow.
 - Agents are simplified models of real participants.
 - Fees and latency will be modelled, but only approximately.
+- Benchmarks measure the matching engine alone, on a synthetic workload.
 
 ## Layout
 
 ```
-include/beaglex/     public headers
-src/                 engine implementation
+include/beaglex/     public headers (OrderBook, BaselineOrderBook, types)
+src/                 engine implementations
 apps/demo.cpp        walk-through of a sweep and a market order
-tests/               unit tests, reference book, differential fuzz test
+bench/               workload generator and benchmark
+tests/               unit tests, reference book, differential fuzz tests
+docs/                benchmark write-up
 ```
