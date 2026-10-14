@@ -44,6 +44,9 @@ target_link_libraries(beaglex_evolve PRIVATE beaglex)
 add_executable(beaglex_experiment apps/experiments.cpp)
 target_link_libraries(beaglex_experiment PRIVATE beaglex)
 
+add_executable(beaglex_export_evolution apps/export_evolution.cpp)
+target_link_libraries(beaglex_export_evolution PRIVATE beaglex)
+
 if(BGX_BUILD_BENCH)
     add_executable(beaglex_bench bench/bench.cpp)
     target_link_libraries(beaglex_bench PRIVATE beaglex)

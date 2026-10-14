@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Beaglex Market Playground</title>
+    <meta name="description" content="A live agent-based stock market running in your browser. Unleash trading algorithms, trigger news shocks, and watch evolution discover how to trade." />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='0' fill='%23000000'/><path d='M5 22l6-7 5 4 6-9 5 5' fill='none' stroke='%23ffb000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/></svg>" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">Beaglex</span>
+        <span class="tagline">a live stock market of 152 trading agents, running in your browser</span>
+      </div>
+      <nav class="views" aria-label="View">
+        <button data-view="market" class="active">Market</button>
+        <button data-view="evolution">Evolution</button>
+      </nav>
+      <div class="clock-group" data-market-only>
+        <span id="status" class="status">LOADING</span>
+        <span id="clock" class="clock">09:30:00</span>
+        <div class="progress"><div id="progress-bar"></div></div>
+      </div>
+      <div class="transport">
+        <button id="play" class="btn primary" title="Play / pause (space)" data-market-only>Pause</button>
+        <label class="speed" data-market-only>
+          Speed
+          <select id="speed">
+            <option value="10">10×</option>
+            <option value="30">30×</option>
+            <option value="60" selected>60×</option>
+            <option value="180">180×</option>
+            <option value="600">600×</option>
+          </select>
+        </label>
+        <button id="new-day" class="btn" title="Start a fresh trading day" data-market-only>New day</button>
+      </div>
+    </header>
+
+    <main class="layout" id="market-view">
+      <section class="stats" id="stats"></section>
+
+      <section class="panel chart-panel">
+        <div class="panel-head">
+          <h2>Price <span class="muted">1-minute candles</span></h2>
+          <div class="legend">
+            <span><i class="swatch up"></i>Traded price</span>
+            <label class="toggle"><input type="checkbox" id="show-value" checked /><i class="swatch value"></i>Hidden true value</label>
+          </div>
+        </div>
+        <div id="chart" class="chart"></div>
+      </section>
+
+      <aside class="panel book-panel">
+        <div class="panel-head"><h2>Order book</h2><span class="muted" id="book-orders"></span></div>
+        <div class="book" id="book"></div>
+      </aside>
+
+      <section class="panel controls-panel">
+        <div class="panel-head"><h2>Meddle with the market</h2></div>
+        <div class="controls">
+          <div class="control">
+            <h3>Trading algorithms</h3>
+            <p>Fast trend-chasers that buy strength and sell weakness every second. Identical copies all fire at once; diverse ones disagree.</p>
+            <div class="row">
+              <button class="btn danger" data-algos="20" data-diverse="0">+20 identical algos</button>
+              <button class="btn" data-algos="20" data-diverse="1">+20 diverse algos</button>
+            </div>
+          </div>
+          <div class="control">
+            <h3>Evolved market makers <span class="tag">evolved</span></h3>
+            <p>A strategy nobody designed: the genetic algorithm discovered it by breeding profitable traders. It quotes both sides one cent apart. Try a day with no built-in market makers, then add these.</p>
+            <div class="row">
+              <button class="btn good" id="add-evolved-mm">+5 evolved market makers</button>
+              <button class="btn" data-goto="evolution">See how it evolved →</button>
+            </div>
+          </div>
+          <div class="control">
+            <h3>Breaking news</h3>
+            <p>Moves the hidden true value. Only value traders can see it, so watch how long the price takes to catch up.</p>
+            <div class="row">
+              <button class="btn good" data-news="3">Good news +3%</button>
+              <button class="btn danger" data-news="-3">Bad news −3%</button>
+            </div>
+          </div>
+          <div class="control">
+            <h3>Circuit breaker</h3>
+            <p>Exchange rules that cap trades at ±5% of the price 5 minutes ago, optionally halting trading for 5 minutes on a breach.</p>
+            <div class="segmented" id="breaker">
+              <button data-mode="0" class="active">Off</button>
+              <button data-mode="1">5% bands</button>
+              <button data-mode="2">Bands + halts</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="panel tape-panel">
+        <div class="panel-head"><h2>Trades</h2><span class="muted" id="trade-count"></span></div>
+        <div class="tape" id="tape"></div>
+      </aside>
+
+      <section class="panel groups-panel">
+        <div class="panel-head"><h2>Who's making money?</h2><span class="muted">profit marked to the last price</span></div>
+        <table class="groups">
+          <thead><tr><th>Trader type</th><th>Agents</th><th>Profit / loss</th><th class="num">Volume</th><th class="num">Net position</th></tr></thead>
+          <tbody id="groups"></tbody>
+        </table>
+      </section>
+
+      <section class="panel setup-panel">
+        <div class="panel-head"><h2>Build your own market</h2><span class="muted">applies on the next day</span></div>
+        <div class="setup" id="setup"></div>
+        <button id="apply-setup" class="btn primary wide">Start a day with this mix</button>
+      </section>
+    </main>
+
+    <main class="evo" id="evolution-view" hidden>
+      <section class="panel evo-intro">
+        <div>
+          <h1>How evolution learned to trade</h1>
+          <p>
+            Nobody programmed these strategies. Each one is a set of <strong>ten numbers, its DNA</strong>: how much to follow
+            trends, how big to trade, how often to act, whether to quote both sides. Twenty random strategies trade together for
+            four days; the most profitable <strong>survive and breed</strong>, mixing and slightly mutating their DNA. Repeat for
+            100 generations.
+          </p>
+          <p>
+            Within a few generations every run converges on the same answer: <strong>market making</strong>, the strategy real
+            trading firms use. Then the market makers compete with each other, pushing the spread down to one cent and their own
+            profits with it. Drag the slider or press play to watch it happen.
+          </p>
+        </div>
+        <div class="holdout" id="holdout"></div>
+      </section>
+
+      <section class="panel scrub">
+        <button id="evo-play" class="btn primary">Play</button>
+        <input type="range" id="evo-gen" min="0" max="99" value="0" step="1" aria-label="Generation" />
+        <span class="gen" id="evo-gen-label">Generation 1</span>
+      </section>
+
+      <div class="evo-charts">
+        <section class="panel evo-chart">
+          <div class="panel-head"><h2>Strategy mix</h2><span class="muted">20 strategies per generation</span></div>
+          <div id="chart-mix"></div>
+          <div class="key" id="mix-key"></div>
+        </section>
+        <section class="panel evo-chart">
+          <div class="panel-head"><h2>Profit per day</h2><span class="muted">risk-adjusted, dollars</span></div>
+          <div id="chart-fitness"></div>
+          <p class="caption">The best strategy's profit falls as rivals copy it: once everyone makes markets, competition eats the margin.</p>
+        </section>
+        <section class="panel evo-chart">
+          <div class="panel-head"><h2>Market spread</h2><span class="muted">cents between best bid and ask</span></div>
+          <div id="chart-spread"></div>
+          <p class="caption">Competing market makers keep undercutting each other until trading costs hit the 1¢ minimum. Good news for every other trader.</p>
+        </section>
+      </div>
+
+      <aside class="panel champion" id="champion"></aside>
+    </main>
+
+    <footer class="footer">
+      Every agent, order and trade is simulated by a C++20 matching engine compiled to WebAssembly.
+      Real latency, fees and price-time priority. Not financial advice: profits here exploit a simulated market.
+      <a href="https://github.com/amalrtms/beaglex">Source and research write-up →</a>
+    </footer>
+
+    <div id="log" class="log" aria-live="polite"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

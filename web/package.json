@@ -1,0 +1,19 @@
+{
+  "name": "beaglex-playground",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build:wasm": "bash build-wasm.sh",
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "lightweight-charts": "4.2.3"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vite": "6.4.4"
+  }
+}
