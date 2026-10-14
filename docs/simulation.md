@@ -21,9 +21,10 @@ through the [matching engine](../README.md#matching-engine).
   sub-cent fees are exact.
 - **Accounts.** The exchange keeps each agent's cash, position, volume and fees.
   Agents only learn about their fills through delayed reports.
-- **A hidden fundamental value**, a geometric random walk (about 1.5% daily
+- **A hidden fundamental value**, a geometric random walk (about 0.8% daily
   volatility) with occasional news jumps. Only value traders observe it, with
-  noise and a persistent private bias.
+  noise and a persistent private bias. Most intraday price movement comes from
+  order flow rather than from the fundamental, as in real markets.
 - **Deterministic.** Every random draw derives from one seed. The same seed and
   configuration reproduce the same day trade for trade.
 
@@ -31,10 +32,10 @@ through the [matching engine](../README.md#matching-engine).
 
 | Agent | Default count | Behaviour |
 |---|---:|---|
-| Market maker | 2 | Every ~100 ms, quotes a bid and ask 1.5 ticks either side of the mid, shifted against its inventory (0.002 ticks per share held). Requotes only when its prices change, so it keeps queue priority. Stops quoting a side at its 5,000 share limit. |
-| Noise trader | 100 | Uninformed flow. Every ~20 s, cancels its working order and sends a random buy or sell: 15% market orders, otherwise limits up to 10 ticks behind or 2 through the mid. |
+| Market maker | 2 | Every ~100 ms, quotes a bid and ask 1.5 ticks either side of the mid, shifted against its inventory (0.002 ticks per share held). Requotes only when its prices change, so it keeps queue priority. Stops quoting a side at its 5,000 share limit. **Liquidity withdrawal:** when its 2-minute volatility estimate runs above its 30-minute baseline, it widens its quotes by 8 ticks per unit of excess ratio. |
+| Noise trader | 100 | Uninformed flow. Every ~20 s, cancels its working order and sends a random buy or sell: 15% market orders, otherwise limits up to 10 ticks behind or 2 through the mid. **Self-exciting activity:** trades more often when it has recently seen higher volatility (up to 4× its normal rate). |
 | Momentum trader | 20 | Chartist. Tracks fast (2 min) and slow (15 min) time-weighted moving averages of the mid. Buys when the fast is 5 bp above the slow, sells when below, unwinds when the trend fades. |
-| Value trader | 30 | Fundamentalist. Every ~90 s, buys when the ask is 20 bp below its estimate of value and sells when the bid is 20 bp above, sized by the mispricing. Takes profit once price converges. Institutional size (4,000 share limit). |
+| Value trader | 30 | Fundamentalist. Every ~30 s, buys when the ask is 10 bp below its estimate of value and sells when the bid is 10 bp above, sized by the mispricing. Takes profit once price converges. Institutional size (4,000 share limit). |
 
 All parameters live in config structs in
 [`include/beaglex/sim/agents.hpp`](../include/beaglex/sim/agents.hpp) and
@@ -46,30 +47,34 @@ All parameters live in config structs in
 
 ```
 Market
-  price      open 100.03  close 99.73  high 102.40  low 98.21
-  true value open 100.00  close 99.21
-  trades     ~62,000
-  avg spread 2.4 ticks, two-sided 100% of the time
-  avg |price - true value| 37 bp
+  price      open 100.03  close 99.26  high 101.16  low 99.17
+  true value open 100.00  close 99.29
+  trades     64,484
+  avg spread 2.5 ticks, two-sided 100% of the time
+  avg |price - true value| 6.8 bp
 ```
 
 Across seeds 1–5 the price tracks the fundamental with an average deviation
-of 33–40 bp, with episodes where it overshoots by 1–2% and is pulled back.
-Value traders profit and noise traders lose, as microstructure theory predicts
-for informed versus uninformed flow (Kyle 1985; Glosten & Milgrom 1985).
-Market makers earn the spread plus rebates.
+of 7–8 bp, on 54,000–114,000 trades a day. Value traders profit and noise
+traders lose, as microstructure theory predicts for informed versus uninformed
+flow (Kyle 1985; Glosten & Milgrom 1985). Market makers earn the spread plus
+rebates.
 
-These are observations, not yet validation. Phase 4 tests the simulated
-returns against the statistical regularities of real markets.
+The statistical behaviour of the returns (fat tails, volatility clustering and
+more) is tested in [validation.md](validation.md).
 
 ## Calibration notes
 
-The first version gave value traders the same position limits as noise
-traders. Thirty value traders could then hold at most 45,000 shares against
-noise flow that drifted 30,000+ shares net in one direction. They saturated,
-and the price detached from value by up to 2.4% for hours. Real informed
-capital is far larger than individual retail flow, so value traders were given
-institutional size and noise traders a smaller inventory cap.
+- The first version gave value traders the same position limits as noise
+  traders. Thirty value traders could then hold at most 45,000 shares against
+  noise flow that drifted 30,000+ shares net in one direction. They saturated,
+  and the price detached from value by up to 2.4% for hours. Real informed
+  capital is far larger than individual retail flow, so value traders were given
+  institutional size and noise traders a smaller inventory cap.
+- Validation against stylized facts then drove a second round: faster value
+  traders, a less volatile fundamental, and the two feedback mechanisms above.
+  The full story, including a bug that briefly drove the market makers out of
+  the market, is in [validation.md](validation.md#how-the-calibration-got-here).
 
 ## Tests
 

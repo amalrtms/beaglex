@@ -20,7 +20,7 @@ profitability. See [Limitations](#limitations).
 | 1 | Matching engine: limit / market / IOC, cancel, modify, price-time priority | ✅ |
 | 2 | Latency & throughput benchmarks, data-structure optimisation | ✅ |
 | 3 | Simulation loop with hand-coded agents (market makers, momentum, noise traders), fees, latency | ✅ |
-| 4 | Validation against empirical stylized facts (fat tails, volatility clustering, …) | ⏳ |
+| 4 | Validation against empirical stylized facts (fat tails, volatility clustering, …) | ✅ |
 | 5 | Genetic evolution of agent strategies | ⏳ |
 | 6 | Experiments and write-up | ⏳ |
 
@@ -35,16 +35,36 @@ fundamental value that only value traders can estimate.
   by each agent's distance from the exchange (100 µs to 20 ms).
 - **Realistic fees**: 0.30¢ taker fee, 0.20¢ maker rebate.
 - **Deterministic**: one seed reproduces the entire day trade for trade.
-- **Fast**: a 6.5 hour day (~1M events) simulates in about a quarter of a second.
+- **Fast**: a 6.5 hour day (1–1.6M events) simulates in a quarter to half a second.
 
-```
-beaglex_sim --seed 3
-  price      open 100.03  close 99.73  high 102.40  low 98.21
-  true value open 100.00  close 99.21
-  avg spread 2.4 ticks, two-sided 100% of the time
-```
+![One simulated trading day](docs/img/example_day.png)
 
 Model, agents, calibration and limitations: [docs/simulation.md](docs/simulation.md).
+
+## Validation: does it behave like a real market?
+
+Real asset returns share well-documented statistical regularities, the
+*stylized facts* (Cont 2001). On 50 out-of-sample simulated days, Beaglex
+reproduces all six tested, while a control series (the hidden fundamental, a
+Gaussian random walk) shows none. So the facts **emerge from agent
+interaction** rather than being fed in.
+
+| Stylized fact | Simulated price | Control | Real markets |
+|---|---:|---:|---|
+| No return autocorrelation (max \|ACF\|, 1–10 min) | 0.030 | 0.017 | ≈ 0 |
+| Fat tails (excess kurtosis, 1 min) | 3.27 | -0.02 | > 0 |
+| Tail index (Hill) | 3.60 | 5.56 | 2–5 |
+| Aggregational Gaussianity (kurtosis 1 → 30 min) | 3.27 → -0.31 | flat | decreasing |
+| Volatility clustering (ACF of \|r\|, lags 1–10) | 0.140 | 0.001 | > 0, slow decay |
+| Volume–volatility correlation | 0.366 | n/a | > 0 |
+
+![Volatility clustering](docs/img/volatility_clustering.png)
+
+Ablations show which mechanism produces which fact. Self-exciting order flow
+drives fat tails and clustering, liquidity withdrawal makes clustering persist,
+and market makers dampen volatility. The model first failed this validation
+(3 of 6); the write-up covers how it was diagnosed and fixed, an overfitting
+check, and what is still unrealistic: [docs/validation.md](docs/validation.md).
 
 ## Performance
 
@@ -104,16 +124,20 @@ Requires Visual Studio 2022+ or Build Tools with the C++ workload (includes CMak
 .\build\release\beaglex_tests.exe    # unit + fuzz tests
 .\build\release\beaglex_bench.exe    # throughput and latency comparison
 .\build\release\beaglex_sim.exe --seed 1 --out out   # simulate a day; writes CSVs to out/
+.\build\release\beaglex_validate.exe --days 50 --seed 1001   # stylized-facts scorecard
+python scripts\plot_validation.py    # charts from the validation CSVs (needs matplotlib)
 ```
 
 ## Limitations
 
 Stated up front so results are read in the right light:
 
-- Single instrument, single venue; no cross-venue effects or hidden/iceberg orders.
-- No real market data yet; the agents generate all order flow.
-- Agents are simplified models of real participants.
-- Fees and latency will be modelled, but only approximately.
+- Single instrument, single venue, one day at a time; no cross-venue effects or hidden/iceberg orders.
+- No real market data; the agents generate all order flow, and parameters are
+  calibrated against stylized facts rather than fitted to real data.
+- Agents are simplified models of real participants. Fees and latency are modelled, but only approximately.
+- Simulated tails are milder and volatility clustering shorter-lived than in real
+  markets (see [validation](docs/validation.md#limitations)).
 - Benchmarks measure the matching engine alone, on a synthetic workload.
 
 ## Layout
@@ -121,10 +145,13 @@ Stated up front so results are read in the right light:
 ```
 include/beaglex/      public headers (OrderBook, BaselineOrderBook, types)
 include/beaglex/sim/  simulation: event loop, agents, population
+include/beaglex/analysis/  return statistics and stylized-facts tests
 src/                  implementations
 apps/demo.cpp         walk-through of a sweep and a market order
 apps/sim.cpp          run a simulated trading day, write CSVs
+apps/validate.cpp     stylized-facts validation and ablation runs
+scripts/              chart generation (Python)
 bench/                workload generator and benchmark
-tests/                unit, fuzz and simulation tests
-docs/                 benchmark and simulation write-ups
+tests/                unit, fuzz, simulation and statistics tests
+docs/                 benchmark, simulation and validation write-ups
 ```

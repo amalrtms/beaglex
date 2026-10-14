@@ -21,6 +21,8 @@ add_library(beaglex
     src/sim/simulation.cpp
     src/sim/agents.cpp
     src/sim/population.cpp
+    src/analysis/stats.cpp
+    src/analysis/stylized_facts.cpp
 )
 target_include_directories(beaglex PUBLIC include)
 
@@ -29,6 +31,9 @@ target_link_libraries(beaglex_demo PRIVATE beaglex)
 
 add_executable(beaglex_sim apps/sim.cpp)
 target_link_libraries(beaglex_sim PRIVATE beaglex)
+
+add_executable(beaglex_validate apps/validate.cpp)
+target_link_libraries(beaglex_validate PRIVATE beaglex)
 
 if(BGX_BUILD_BENCH)
     add_executable(beaglex_bench bench/bench.cpp)
@@ -51,6 +56,7 @@ if(BGX_BUILD_TESTS)
         tests/fuzz_test.cpp
         tests/order_index_test.cpp
         tests/sim_test.cpp
+        tests/stats_test.cpp
     )
     target_link_libraries(beaglex_tests PRIVATE beaglex GTest::gtest_main)
     include(GoogleTest)

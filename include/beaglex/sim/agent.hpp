@@ -3,6 +3,7 @@
 #include "beaglex/sim/types.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <random>
 
@@ -40,6 +41,35 @@ public:
 private:
     Simulation& sim_;
     AgentId id_;
+};
+
+// Exponentially weighted volatility estimate from irregularly timed price
+// observations, in ticks per square-root second. Each observation contributes
+// (dp)^2 / dt, an unbiased estimate of the variance rate, weighted by how much
+// time it covers relative to the time constant `tau`.
+class VolatilityEstimator {
+public:
+    VolatilityEstimator(Time tau, double initial_sigma) : tau_(tau), variance_(initial_sigma * initial_sigma) {}
+
+    void update(Time now, double price) {
+        if (has_last_ && now > last_time_) {
+            const double dt = static_cast<double>(now - last_time_);
+            const double rate = (price - last_price_) * (price - last_price_) / (dt / static_cast<double>(kSecond));
+            variance_ += (1.0 - std::exp(-dt / static_cast<double>(tau_))) * (rate - variance_);
+        }
+        last_time_ = now;
+        last_price_ = price;
+        has_last_ = true;
+    }
+
+    double sigma() const noexcept { return std::sqrt(variance_); }
+
+private:
+    Time tau_;
+    double variance_;
+    Time last_time_ = 0;
+    double last_price_ = 0;
+    bool has_last_ = false;
 };
 
 class Agent {

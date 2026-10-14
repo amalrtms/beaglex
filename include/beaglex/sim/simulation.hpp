@@ -20,7 +20,7 @@ struct FeeSchedule {
 // it depends on the agents.
 struct FundamentalConfig {
     Price initial = 10'000;              // $100.00
-    double volatility_per_second = 1e-4; // ~1.5% over a 6.5 hour day
+    double volatility_per_second = 0.5e-4; // ~0.8% over a 6.5 hour day
     double jumps_per_hour = 0.5;
     double jump_sigma = 0.004;           // 0.4% news moves
 };

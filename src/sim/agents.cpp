@@ -36,8 +36,20 @@ void NoiseTrader::on_start(AgentContext& ctx) {
     ctx.wake_after(exponential(cfg_.mean_interval));
 }
 
+Time NoiseTrader::next_interval() {
+    if (cfg_.activity_sensitivity == 0.0) {
+        return exponential(cfg_.mean_interval);
+    }
+    const double excitement = vol_.sigma() / cfg_.reference_volatility - 1.0;
+    const double intensity = std::clamp(1.0 + cfg_.activity_sensitivity * excitement, 0.5, cfg_.max_intensity);
+    return exponential(static_cast<Time>(static_cast<double>(cfg_.mean_interval) / intensity));
+}
+
 void NoiseTrader::on_wakeup(AgentContext& ctx) {
-    ctx.wake_after(exponential(cfg_.mean_interval));
+    const MarketView view = ctx.market();
+    const double ref = reference_price(view).value_or(static_cast<double>(cfg_.fallback_price));
+    vol_.update(ctx.now(), ref);
+    ctx.wake_after(next_interval());
 
     // At most one working order: replace rather than accumulate.
     if (resting_) {
@@ -45,7 +57,6 @@ void NoiseTrader::on_wakeup(AgentContext& ctx) {
         resting_.reset();
     }
 
-    const double ref = reference_price(ctx.market()).value_or(static_cast<double>(cfg_.fallback_price));
     Side side = uniform() < 0.5 ? Side::Buy : Side::Sell;
     if (position_ >= cfg_.max_position) {
         side = Side::Sell;
@@ -81,10 +92,18 @@ void MarketMaker::on_wakeup(AgentContext& ctx) {
     ctx.wake_after(cfg_.interval + uniform_int(0, cfg_.interval / 10));
 
     const double ref = reference_price(ctx.market()).value_or(static_cast<double>(cfg_.fallback_price));
+    if (ctx.now() - last_vol_sample_ >= kSecond) {
+        fast_vol_.update(ctx.now(), ref);
+        slow_vol_.update(ctx.now(), ref);
+        last_vol_sample_ = ctx.now();
+    }
     // Long inventory pushes quotes down (sell more readily), short pushes them up.
     const double centre = ref - cfg_.skew_per_share * static_cast<double>(position_);
-    const auto bid = static_cast<Price>(std::floor(centre - cfg_.half_spread));
-    auto ask = static_cast<Price>(std::ceil(centre + cfg_.half_spread));
+    // Unusually volatile markets carry more adverse-selection risk: quote wider.
+    const double stress = std::max(0.0, fast_vol_.sigma() / slow_vol_.sigma() - 1.0);
+    const double half_spread = cfg_.half_spread + cfg_.stress_spread * stress;
+    const auto bid = static_cast<Price>(std::floor(centre - half_spread));
+    auto ask = static_cast<Price>(std::ceil(centre + half_spread));
     if (ask <= bid) {
         ask = bid + 1;
     }

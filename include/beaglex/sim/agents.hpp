@@ -21,18 +21,30 @@ struct NoiseTraderConfig {
     Price max_cross = 2;   // ...or up to this many through it
     Qty max_position = 1'000;
     Price fallback_price = 10'000; // used before the market has any prices
+
+    // Attention: trading activity rises with recently observed volatility
+    // (self-exciting order flow). Intensity = 1 + sensitivity * (sigma / reference - 1),
+    // clamped to [0.5, max_intensity]. Zero sensitivity disables it.
+    double activity_sensitivity = 10.0;
+    double reference_volatility = 1.0; // ticks per sqrt(second)
+    double max_intensity = 4.0;
+    Time volatility_tau = 5 * kMinute;
 };
 
 class NoiseTrader final : public Agent {
 public:
-    NoiseTrader(const NoiseTraderConfig& cfg, std::uint64_t seed) : Agent(seed), cfg_(cfg) {}
+    NoiseTrader(const NoiseTraderConfig& cfg, std::uint64_t seed)
+        : Agent(seed), cfg_(cfg), vol_(cfg.volatility_tau, cfg.reference_volatility) {}
     const char* kind() const noexcept override { return "noise"; }
     void on_start(AgentContext& ctx) override;
     void on_wakeup(AgentContext& ctx) override;
     void on_fill(AgentContext& ctx, const Fill& fill) override;
 
 private:
+    Time next_interval();
+
     NoiseTraderConfig cfg_;
+    VolatilityEstimator vol_;
     std::optional<OrderId> resting_;
 };
 
@@ -45,11 +57,21 @@ struct MarketMakerConfig {
     Qty max_position = 5'000;
     double skew_per_share = 0.002; // centre shifts this many ticks per share held
     Price fallback_price = 10'000;
+
+    // Liquidity withdrawal: when recent volatility runs above its longer-run
+    // norm, the half-spread widens by `stress_spread` ticks per unit of excess
+    // ratio (fast / slow - 1). Volatility is sampled once a second so
+    // half-tick bounces between wake-ups are not mistaken for risk.
+    // Zero disables it.
+    double stress_spread = 8.0;
+    Time fast_volatility_tau = 2 * kMinute;
+    Time slow_volatility_tau = 30 * kMinute;
 };
 
 class MarketMaker final : public Agent {
 public:
-    MarketMaker(const MarketMakerConfig& cfg, std::uint64_t seed) : Agent(seed), cfg_(cfg) {}
+    MarketMaker(const MarketMakerConfig& cfg, std::uint64_t seed)
+        : Agent(seed), cfg_(cfg), fast_vol_(cfg.fast_volatility_tau, 1.0), slow_vol_(cfg.slow_volatility_tau, 1.0) {}
     const char* kind() const noexcept override { return "market_maker"; }
     void on_start(AgentContext& ctx) override;
     void on_wakeup(AgentContext& ctx) override;
@@ -63,6 +85,9 @@ private:
     void requote(AgentContext& ctx, std::optional<Quote>& quote, Side side, Price price, bool want);
 
     MarketMakerConfig cfg_;
+    VolatilityEstimator fast_vol_;
+    VolatilityEstimator slow_vol_;
+    Time last_vol_sample_ = -kSecond;
     std::optional<Quote> bid_;
     std::optional<Quote> ask_;
 };
@@ -98,10 +123,10 @@ private:
 // Fundamentalist: has a noisy, privately biased estimate of the true value
 // and trades when the market price strays far enough from it.
 struct ValueTraderConfig {
-    Time mean_interval = 90 * kSecond;
-    double threshold = 0.002;   // acts on a 20 bp mispricing
-    double noise_sigma = 0.002; // per-observation estimation error
-    double bias_sigma = 0.001;  // persistent per-agent bias
+    Time mean_interval = 30 * kSecond;
+    double threshold = 0.001;     // acts on a 10 bp mispricing
+    double noise_sigma = 0.0005;  // per-observation estimation error
+    double bias_sigma = 0.00025;  // persistent per-agent bias
     Qty lot = 100;
     int max_lots = 10;
     Qty max_position = 4'000; // institutional size: much larger than noise flow
