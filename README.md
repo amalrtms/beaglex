@@ -19,10 +19,32 @@ profitability. See [Limitations](#limitations).
 |---|---|---|
 | 1 | Matching engine: limit / market / IOC, cancel, modify, price-time priority | ✅ |
 | 2 | Latency & throughput benchmarks, data-structure optimisation | ✅ |
-| 3 | Simulation loop with hand-coded agents (market makers, momentum, noise traders), fees, latency | ⏳ |
+| 3 | Simulation loop with hand-coded agents (market makers, momentum, noise traders), fees, latency | ✅ |
 | 4 | Validation against empirical stylized facts (fat tails, volatility clustering, …) | ⏳ |
 | 5 | Genetic evolution of agent strategies | ⏳ |
 | 6 | Experiments and write-up | ⏳ |
+
+## Market simulation
+
+A discrete-event simulation of a full trading day: 152 agents of four types
+(market makers, noise traders, momentum traders and value traders) trade through
+the matching engine. Prices emerge from their interaction around a hidden
+fundamental value that only value traders can estimate.
+
+- **Latency everywhere**: orders, fill reports and market data are all delayed
+  by each agent's distance from the exchange (100 µs to 20 ms).
+- **Realistic fees**: 0.30¢ taker fee, 0.20¢ maker rebate.
+- **Deterministic**: one seed reproduces the entire day trade for trade.
+- **Fast**: a 6.5 hour day (~1M events) simulates in about a quarter of a second.
+
+```
+beaglex_sim --seed 3
+  price      open 100.03  close 99.73  high 102.40  low 98.21
+  true value open 100.00  close 99.21
+  avg spread 2.4 ticks, two-sided 100% of the time
+```
+
+Model, agents, calibration and limitations: [docs/simulation.md](docs/simulation.md).
 
 ## Performance
 
@@ -81,6 +103,7 @@ Requires Visual Studio 2022+ or Build Tools with the C++ workload (includes CMak
 .\build\release\beaglex_demo.exe     # walk through a sweep and a market order
 .\build\release\beaglex_tests.exe    # unit + fuzz tests
 .\build\release\beaglex_bench.exe    # throughput and latency comparison
+.\build\release\beaglex_sim.exe --seed 1 --out out   # simulate a day; writes CSVs to out/
 ```
 
 ## Limitations
@@ -96,10 +119,12 @@ Stated up front so results are read in the right light:
 ## Layout
 
 ```
-include/beaglex/     public headers (OrderBook, BaselineOrderBook, types)
-src/                 engine implementations
-apps/demo.cpp        walk-through of a sweep and a market order
-bench/               workload generator and benchmark
-tests/               unit tests, reference book, differential fuzz tests
-docs/                benchmark write-up
+include/beaglex/      public headers (OrderBook, BaselineOrderBook, types)
+include/beaglex/sim/  simulation: event loop, agents, population
+src/                  implementations
+apps/demo.cpp         walk-through of a sweep and a market order
+apps/sim.cpp          run a simulated trading day, write CSVs
+bench/                workload generator and benchmark
+tests/                unit, fuzz and simulation tests
+docs/                 benchmark and simulation write-ups
 ```
