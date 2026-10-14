@@ -23,6 +23,9 @@ add_library(beaglex
     src/sim/population.cpp
     src/analysis/stats.cpp
     src/analysis/stylized_facts.cpp
+    src/evo/genome.cpp
+    src/evo/evolved_trader.cpp
+    src/evo/evolution.cpp
 )
 target_include_directories(beaglex PUBLIC include)
 
@@ -34,6 +37,9 @@ target_link_libraries(beaglex_sim PRIVATE beaglex)
 
 add_executable(beaglex_validate apps/validate.cpp)
 target_link_libraries(beaglex_validate PRIVATE beaglex)
+
+add_executable(beaglex_evolve apps/evolve.cpp)
+target_link_libraries(beaglex_evolve PRIVATE beaglex)
 
 if(BGX_BUILD_BENCH)
     add_executable(beaglex_bench bench/bench.cpp)
@@ -57,6 +63,7 @@ if(BGX_BUILD_TESTS)
         tests/order_index_test.cpp
         tests/sim_test.cpp
         tests/stats_test.cpp
+        tests/evo_test.cpp
     )
     target_link_libraries(beaglex_tests PRIVATE beaglex GTest::gtest_main)
     include(GoogleTest)

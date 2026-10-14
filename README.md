@@ -21,7 +21,7 @@ profitability. See [Limitations](#limitations).
 | 2 | Latency & throughput benchmarks, data-structure optimisation | ✅ |
 | 3 | Simulation loop with hand-coded agents (market makers, momentum, noise traders), fees, latency | ✅ |
 | 4 | Validation against empirical stylized facts (fat tails, volatility clustering, …) | ✅ |
-| 5 | Genetic evolution of agent strategies | ⏳ |
+| 5 | Genetic evolution of agent strategies | ✅ |
 | 6 | Experiments and write-up | ⏳ |
 
 ## Market simulation
@@ -65,6 +65,32 @@ drives fat tails and clustering, liquidity withdrawal makes clustering persist,
 and market makers dampen volatility. The model first failed this validation
 (3 of 6); the write-up covers how it was diagnosed and fixed, an overfitting
 check, and what is still unrealistic: [docs/validation.md](docs/validation.md).
+
+## Evolving strategies
+
+A genetic algorithm evolves a population of 20 trading strategies inside the
+validated market. Each strategy is an **interpretable genome** of ten named
+genes: signal weights (trend, short-term reversion, order-flow imbalance,
+inventory), a trading threshold, aggression, size, speed, and a switch between
+directional trading and two-sided quoting. Strategies are uninformed: they see
+delayed market data, never the fundamental value. The population **co-evolves**,
+trading together against the background agents and each other, on fresh market
+days every generation.
+
+![Strategy mix by generation](docs/img/evolution_mix.png)
+
+From random starting points, three independent runs all converge on the same
+strategy: **a fast, tight market maker** that quotes at the minimum spread,
+leans hard against its inventory, and shifts its quotes toward short-term price
+moves and order-flow imbalance. That is how real market makers manage inventory
+and adverse-selection risk, and none of it was programmed in. Competition among
+the evolved market makers then drives the whole market's spread from about 2.1
+ticks to its 1-tick minimum and competes their profits away.
+
+On 10 held-out days, 16–18 of 20 evolved strategies are profitable, against 8–10
+of the random starting population. Average profit does not reliably improve:
+the gains go to other traders as tighter spreads. Details, the design flaws
+found along the way, and limitations: [docs/evolution.md](docs/evolution.md).
 
 ## Performance
 
@@ -126,6 +152,8 @@ Requires Visual Studio 2022+ or Build Tools with the C++ workload (includes CMak
 .\build\release\beaglex_sim.exe --seed 1 --out out   # simulate a day; writes CSVs to out/
 .\build\release\beaglex_validate.exe --days 50 --seed 1001   # stylized-facts scorecard
 python scripts\plot_validation.py    # charts from the validation CSVs (needs matplotlib)
+.\build\release\beaglex_evolve.exe --generations 100   # evolve strategies; writes out/evolution/
+python scripts\plot_evolution.py     # charts from the evolution CSVs
 ```
 
 ## Limitations
@@ -146,12 +174,14 @@ Stated up front so results are read in the right light:
 include/beaglex/      public headers (OrderBook, BaselineOrderBook, types)
 include/beaglex/sim/  simulation: event loop, agents, population
 include/beaglex/analysis/  return statistics and stylized-facts tests
+include/beaglex/evo/  genomes, evolved trader, genetic algorithm
 src/                  implementations
 apps/demo.cpp         walk-through of a sweep and a market order
 apps/sim.cpp          run a simulated trading day, write CSVs
 apps/validate.cpp     stylized-facts validation and ablation runs
+apps/evolve.cpp       evolve strategies and test them on held-out days
 scripts/              chart generation (Python)
 bench/                workload generator and benchmark
-tests/                unit, fuzz, simulation and statistics tests
-docs/                 benchmark, simulation and validation write-ups
+tests/                unit, fuzz, simulation, statistics and evolution tests
+docs/                 benchmark, simulation, validation and evolution write-ups
 ```
