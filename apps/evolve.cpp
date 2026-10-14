@@ -2,6 +2,7 @@
 // Usage: beaglex_evolve [--generations N] [--population N] [--days N] [--seed S] [--out DIR]
 
 #include "beaglex/evo/evolution.hpp"
+#include "beaglex/evo/presets.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -76,9 +77,12 @@ int main(int argc, char** argv) {
             cfg.risk_aversion = std::atof(v);
         } else if (!std::strcmp(argv[i], "--out")) {
             out_dir = v;
+        } else if (!std::strcmp(argv[i], "--fixed-momentum")) {
+            // Prey for experiment 3: momentum algos that are part of the environment.
+            cfg.fixed_strategies.assign(std::strtoull(v, nullptr, 10), presets::momentum_algo());
         } else {
             std::fprintf(stderr, "usage: beaglex_evolve [--generations N] [--population N] [--days N] [--seed S] "
-                                 "[--risk-aversion X] [--out DIR]\n");
+                                 "[--risk-aversion X] [--fixed-momentum N] [--out DIR]\n");
             return 2;
         }
     }
@@ -89,8 +93,12 @@ int main(int argc, char** argv) {
 
     Evolution evo(cfg);
     const std::vector<Genome> initial = evo.population();
-    std::printf("Evolving %zu strategies for %zu generations, %zu market days each (seed %llu)\n\n", cfg.population,
+    std::printf("Evolving %zu strategies for %zu generations, %zu market days each (seed %llu)\n", cfg.population,
                 cfg.generations, cfg.days_per_generation, static_cast<unsigned long long>(cfg.seed));
+    std::printf("Environment: background agents%s\n\n",
+                cfg.fixed_strategies.empty()
+                    ? ""
+                    : (" + " + std::to_string(cfg.fixed_strategies.size()) + " fixed momentum algos").c_str());
     std::printf("%4s %10s %10s | %-46s | %7s %6s %6s %6s %7s\n", "gen", "best $", "mean $", "strategy mix", "vol bp",
                 "kurt", "|r|ac", "share", "maxdev");
 
@@ -134,6 +142,10 @@ int main(int argc, char** argv) {
                 100 * day_mean(after, &DayResult::evolved_volume_share));
     std::printf("  largest price deviation from value %13.2f%% %15.2f%%\n",
                 day_mean(before, &DayResult::max_deviation_pct), day_mean(after, &DayResult::max_deviation_pct));
+    if (!cfg.fixed_strategies.empty()) {
+        std::printf("  each fixed momentum algo ($/day)   %14.0f %16.0f\n", day_mean(before, &DayResult::fixed_pnl),
+                    day_mean(after, &DayResult::fixed_pnl));
+    }
 
     // Final population, ranked by held-out fitness.
     std::vector<std::size_t> order(final_pop.size());

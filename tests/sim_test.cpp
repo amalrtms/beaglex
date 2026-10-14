@@ -112,6 +112,78 @@ TEST(Simulation, AgentsCannotCancelOthersOrders) {
     ASSERT_EQ(sim.trades().size(), 1u); // A's order survived B's cancel
 }
 
+TEST(Simulation, PriceBandsStopExecutionsFarFromReference) {
+    auto run = [](bool bands) {
+        SimConfig cfg = short_config(1, 10 * kMinute);
+        cfg.price_band.enabled = bands;
+        cfg.price_band.width = 0.05;
+        Simulation sim(cfg);
+        // A market around 99.95 from the open; a far ask at 110.00 (10% away).
+        sim.add_agent(std::unique_ptr<Agent>(new ScriptedAgent({{0, [](AgentContext& c) {
+                          c.submit(Side::Buy, OrderType::Limit, 9'990, 100);
+                          c.submit(Side::Sell, OrderType::Limit, 10'000, 100);
+                          c.submit(Side::Sell, OrderType::Limit, 11'000, 100);
+                      }}})),
+                      kMillisecond);
+        // Six minutes later a market buy for 300 tries to sweep both asks.
+        sim.add_agent(std::unique_ptr<Agent>(new ScriptedAgent({{6 * kMinute, [](AgentContext& c) {
+                          c.submit(Side::Buy, OrderType::Market, 0, 300);
+                      }}})),
+                      kMillisecond);
+        sim.run();
+        Price highest = 0;
+        for (const auto& t : sim.trades()) {
+            highest = std::max(highest, t.price);
+        }
+        return std::make_pair(sim.trades().size(), highest);
+    };
+
+    const auto [unbanded_trades, unbanded_high] = run(false);
+    EXPECT_EQ(unbanded_trades, 2u);
+    EXPECT_EQ(unbanded_high, 11'000);
+
+    const auto [banded_trades, banded_high] = run(true);
+    EXPECT_EQ(banded_trades, 1u); // 110.00 is beyond the 5% band around 99.95
+    EXPECT_EQ(banded_high, 10'000);
+}
+
+TEST(Simulation, BreachingTheBandHaltsTrading) {
+    SimConfig cfg = short_config(1, 20 * kMinute);
+    cfg.price_band = {true, 0.05, 5 * kMinute, 5 * kMinute};
+    Simulation sim(cfg);
+
+    // Mid 99.95 at first; at 2 minutes the ask is pulled to 110.00 (mid 104.95).
+    OrderId ask = 0;
+    auto* maker = new ScriptedAgent({
+        {0, [&](AgentContext& c) {
+             c.submit(Side::Buy, OrderType::Limit, 9'990, 100);
+             ask = c.submit(Side::Sell, OrderType::Limit, 10'000, 100);
+         }},
+        {2 * kMinute, [&](AgentContext& c) {
+             c.cancel(ask);
+             c.submit(Side::Sell, OrderType::Limit, 11'000, 300);
+         }},
+    });
+    // At 6 minutes the band is centred on the 1-minute mid (99.95), so 110.00
+    // is beyond it: the first buy halts trading for 5 minutes, the second is
+    // rejected during the halt, and the third (12 minutes, band now centred on
+    // 104.95) trades.
+    auto* taker = new ScriptedAgent({
+        {6 * kMinute, [](AgentContext& c) { c.submit(Side::Buy, OrderType::Market, 0, 100); }},
+        {7 * kMinute, [](AgentContext& c) { c.submit(Side::Buy, OrderType::Limit, 11'000, 100); }},
+        {12 * kMinute, [](AgentContext& c) { c.submit(Side::Buy, OrderType::Market, 0, 100); }},
+    });
+    sim.add_agent(std::unique_ptr<Agent>(maker), kMillisecond);
+    sim.add_agent(std::unique_ptr<Agent>(taker), kMillisecond);
+    sim.run();
+
+    EXPECT_EQ(sim.halts(), 1u);
+    EXPECT_EQ(sim.orders_rejected_in_halt(), 1u);
+    ASSERT_EQ(sim.trades().size(), 1u);
+    EXPECT_EQ(sim.trades()[0].price, 11'000);
+    EXPECT_GE(sim.trades()[0].time, 12 * kMinute);
+}
+
 TEST(Simulation, SameSeedSameMarket) {
     auto run = [](std::uint64_t seed) {
         auto sim = std::make_unique<Simulation>(short_config(seed, 30 * kMinute));

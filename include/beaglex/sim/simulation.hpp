@@ -25,8 +25,26 @@ struct FundamentalConfig {
     double jump_sigma = 0.004;           // 0.4% news moves
 };
 
+// Exchange price bands, a simplified "limit up-limit down" rule. Incoming
+// orders cannot execute more than `width` away from the mid price of
+// `reference_lag` ago: buy prices are capped at the upper band, sell prices
+// floored at the lower one, and market orders become IOC orders at the band.
+//
+// With a positive `halt_duration`, an order that would trade against a market
+// already beyond the band instead triggers a trading pause: for that long,
+// new orders are rejected (cancels still work), as in the real rule's 5-minute
+// pauses. The real rule's 15-second "limit state" and reopening auction are
+// not modelled.
+struct PriceBandConfig {
+    bool enabled = false;
+    double width = 0.05;
+    Time reference_lag = 5 * kMinute;
+    Time halt_duration = 0;
+};
+
 struct SimConfig {
     std::uint64_t seed = 1;
+    PriceBandConfig price_band;
     Time duration = 6 * kHour + 30 * kMinute; // one trading day
     Time sample_interval = kSecond;
     FeeSchedule fees;
@@ -79,6 +97,10 @@ public:
     const std::vector<Sample>& samples() const noexcept { return samples_; }
     Money exchange_revenue() const noexcept { return exchange_revenue_; }
     std::size_t events_processed() const noexcept { return events_; }
+    std::size_t band_adjusted_orders() const noexcept { return band_adjusted_; }
+    std::size_t band_adjusted_orders(AgentId id) const { return agents_[id].band_adjusted; }
+    std::size_t halts() const noexcept { return halts_; }
+    std::size_t orders_rejected_in_halt() const noexcept { return orders_rejected_in_halt_; }
 
     double fundamental_at(Time t) const;
 
@@ -106,11 +128,17 @@ private:
         std::unique_ptr<Agent> agent;
         Time latency = 0;
         Account account;
+        std::size_t band_adjusted = 0;
     };
 
     void schedule(Event e);
     void process(const Event& e);
     void on_order_arrival(const Event& e);
+    struct BandResult {
+        NewOrder order;
+        bool breach;
+    };
+    BandResult apply_price_band(NewOrder order, AgentId agent);
     void on_cancel_arrival(const Event& e);
     void settle(const Trade& t, Qty maker_leaves, Qty taker_leaves);
     void record_top_of_book();
@@ -127,6 +155,10 @@ private:
     std::optional<Price> last_trade_;
     Money exchange_revenue_ = 0;
     std::size_t events_ = 0;
+    std::size_t band_adjusted_ = 0;
+    Time halted_until_ = 0;
+    std::size_t halts_ = 0;
+    std::size_t orders_rejected_in_halt_ = 0;
 
     std::vector<double> fundamental_;    // one value per simulated second
     std::vector<MarketView> tob_history_; // every change of top of book, in time order

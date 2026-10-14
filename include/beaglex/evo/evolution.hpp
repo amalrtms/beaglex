@@ -27,6 +27,9 @@ struct EvolutionConfig {
 
     sim::SimConfig market;          // seed is overridden per simulated day
     sim::PopulationConfig background;
+    // Fixed strategies added to every simulated day as part of the environment.
+    // They trade like evolved agents but are not evolved or scored.
+    std::vector<Genome> fixed_strategies;
     EvolvedTraderConfig trader;
     sim::Time evolved_latency = 5 * sim::kMillisecond;
 };
@@ -40,6 +43,9 @@ struct DayResult {
     double avg_spread_ticks = 0;
     double evolved_volume_share = 0; // evolved agents' share of all agent-side volume (each trade has two sides)
     double max_deviation_pct = 0;    // largest |price / fundamental - 1| during the day, in percent
+    double mean_deviation_bp = 0;    // average |price / fundamental - 1|, in basis points
+    double fixed_pnl = 0;            // dollars per fixed strategy, averaged over them
+    double halts = 0;                // trading halts triggered by price bands
 };
 
 struct Evaluation {

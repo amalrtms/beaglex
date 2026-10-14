@@ -55,20 +55,33 @@ DayResult Evolution::simulate_day(const std::vector<Genome>& genomes, std::uint6
     for (std::size_t i = 0; i < genomes.size(); ++i) {
         s.add_agent(std::make_unique<EvolvedTrader>(genomes[i], trader, mix(seed * 1'000 + i)), config_.evolved_latency);
     }
+    const auto first_fixed = static_cast<sim::AgentId>(s.agent_count());
+    for (std::size_t i = 0; i < config_.fixed_strategies.size(); ++i) {
+        s.add_agent(std::make_unique<EvolvedTrader>(config_.fixed_strategies[i], trader, mix(seed * 1'000 + 500 + i)),
+                    config_.evolved_latency);
+    }
     s.run();
 
     const analysis::DayData day = analysis::extract_day(s);
     const double close = day.price.back();
 
+    // Liquidating the closing position costs about half the spread: one tick per share.
+    auto net_pnl = [&](sim::AgentId id) {
+        const sim::Account& a = s.account(id);
+        return sim::to_dollars(a.mark_to_market(close) - std::abs(a.position) * sim::kMoneyPerTick);
+    };
+
     DayResult r;
     r.pnl.resize(genomes.size());
     Qty evolved_volume = 0;
     for (std::size_t i = 0; i < genomes.size(); ++i) {
-        const sim::Account& a = s.account(first + static_cast<sim::AgentId>(i));
-        // Liquidating the closing position costs about half the spread: one tick per share.
-        const sim::Money liquidation = std::abs(a.position) * sim::kMoneyPerTick;
-        r.pnl[i] = sim::to_dollars(a.mark_to_market(close) - liquidation);
-        evolved_volume += a.volume;
+        const auto id = first + static_cast<sim::AgentId>(i);
+        r.pnl[i] = net_pnl(id);
+        evolved_volume += s.account(id).volume;
+    }
+    for (std::size_t i = 0; i < config_.fixed_strategies.size(); ++i) {
+        r.fixed_pnl += net_pnl(first_fixed + static_cast<sim::AgentId>(i)) /
+                       static_cast<double>(config_.fixed_strategies.size());
     }
 
     Qty traded = 0;
@@ -77,9 +90,12 @@ DayResult Evolution::simulate_day(const std::vector<Genome>& genomes, std::uint6
     }
     r.evolved_volume_share = traded > 0 ? static_cast<double>(evolved_volume) / (2.0 * static_cast<double>(traded)) : 0.0;
     for (std::size_t t = 0; t < day.price.size(); ++t) {
-        r.max_deviation_pct = std::max(r.max_deviation_pct, std::abs(day.price[t] / day.fundamental[t] - 1.0) * 100.0);
+        const double deviation = std::abs(day.price[t] / day.fundamental[t] - 1.0);
+        r.max_deviation_pct = std::max(r.max_deviation_pct, deviation * 100.0);
+        r.mean_deviation_bp += deviation * 1e4 / static_cast<double>(day.price.size());
     }
 
+    r.halts = static_cast<double>(s.halts());
     r.minute_returns = analysis::log_returns(day.price, 60);
     r.return_sd_bp = analysis::stddev(r.minute_returns) * 1e4;
     r.abs_return_acf1 = analysis::autocorrelation({analysis::absolute(r.minute_returns)}, 1);

@@ -13,16 +13,43 @@ races between strategies).
 are exploiting a simulated market; that says nothing about real-world
 profitability. See [Limitations](#limitations).
 
-## Status
+## Key findings
 
-| Phase | Scope | Status |
+1. **The simulated market behaves like a real one.** On 50 out-of-sample days it
+   reproduces six stylized facts of real returns (fat tails, volatility
+   clustering and others) that a random-walk control does not, so they emerge
+   from agent interaction. [Validation](docs/validation.md)
+2. **Evolution rediscovers market making.** Strategies evolved from random
+   genomes converge on tight, fast, inventory-averse quoting, which is how real
+   market makers operate, and their competition drives the spread to its
+   one-tick minimum. [Evolution](docs/evolution.md)
+3. **A few identical algorithms can destabilise the market.** Between 10 and 20
+   copies of a trend-chasing algorithm, under 2% of volume, the market tips from
+   mostly stable to dislocated every day. Giving the same number of algorithms
+   diverse signals cuts volatility by 2.7x: **herding** is the hazard.
+   [Experiments](docs/experiments.md#1-how-much-algorithmic-trading-can-the-market-absorb)
+4. **Circuit breakers can backfire.** Price bands with a lagged reference make
+   the algorithm-driven market four times as volatile. Adding trading halts
+   contains volatility somewhat, at the cost of halting trading for over half the
+   day. [Experiments](docs/experiments.md#2-do-circuit-breakers-help)
+5. **Adaptive markets grow their own defences.** With trend-chasing algorithms
+   present, evolution produces their mirror image, mean-reverting predators, which
+   cut volatility from 149 bp to about 8 bp while competing their own profits
+   away. [Experiments](docs/experiments.md#3-predator-and-prey)
+
+All results come with confidence intervals, held-out or out-of-sample tests, and
+stated limitations.
+
+## Project phases
+
+| Phase | Scope | Write-up |
 |---|---|---|
-| 1 | Matching engine: limit / market / IOC, cancel, modify, price-time priority | ✅ |
-| 2 | Latency & throughput benchmarks, data-structure optimisation | ✅ |
-| 3 | Simulation loop with hand-coded agents (market makers, momentum, noise traders), fees, latency | ✅ |
-| 4 | Validation against empirical stylized facts (fat tails, volatility clustering, …) | ✅ |
-| 5 | Genetic evolution of agent strategies | ✅ |
-| 6 | Experiments and write-up | ⏳ |
+| 1 | Matching engine: limit / market / IOC, cancel, modify, price-time priority | [below](#matching-engine) |
+| 2 | Latency & throughput benchmarks, data-structure optimisation | [benchmarks.md](docs/benchmarks.md) |
+| 3 | Discrete-event market simulation with latency, fees and four agent types | [simulation.md](docs/simulation.md) |
+| 4 | Validation against empirical stylized facts | [validation.md](docs/validation.md) |
+| 5 | Co-evolution of interpretable trading strategies | [evolution.md](docs/evolution.md) |
+| 6 | Experiments: algorithmic share, herding, circuit breakers, predator and prey | [experiments.md](docs/experiments.md) |
 
 ## Market simulation
 
@@ -92,6 +119,30 @@ of the random starting population. Average profit does not reliably improve:
 the gains go to other traders as tighter spreads. Details, the design flaws
 found along the way, and limitations: [docs/evolution.md](docs/evolution.md).
 
+## Experiments: algorithms and market stability
+
+Controlled experiments with a paired design: every condition runs on the same 20
+market days, with 95% confidence intervals.
+
+![Algorithm share](docs/img/exp_algo_share.png)
+
+- **Algorithmic share.** Adding fast trend-chasing algorithms produces a tipping
+  point between 10 and 20 copies, at under 2% of volume. Adding the evolved
+  market-making algos instead cuts the spread from 2.5 to 1 tick while volatility
+  stays roughly flat.
+- **Herding.** The same number of algorithms with diverse signals does a
+  fraction of the damage of identical copies (65 vs 174 bp volatility at 20).
+- **Circuit breakers.** Price bands alone amplify the runaway about fourfold;
+  bands with 5-minute halts cut volatility about 20% but halt trading for over
+  half the day.
+- **Predator and prey.** Evolution in a market full of trend chasers produces
+  mean-reverting predators that bring volatility from 149 bp back to near
+  normal.
+
+![Predators](docs/img/exp_predators.png)
+
+Full results, mechanisms and caveats: [docs/experiments.md](docs/experiments.md).
+
 ## Performance
 
 On a realistic synthetic order flow (2M operations, ~8,600 resting orders),
@@ -154,6 +205,9 @@ Requires Visual Studio 2022+ or Build Tools with the C++ workload (includes CMak
 python scripts\plot_validation.py    # charts from the validation CSVs (needs matplotlib)
 .\build\release\beaglex_evolve.exe --generations 100   # evolve strategies; writes out/evolution/
 python scripts\plot_evolution.py     # charts from the evolution CSVs
+.\build\release\beaglex_experiment.exe algo-share   # also: herding, circuit-breakers
+.\build\release\beaglex_evolve.exe --generations 60 --fixed-momentum 20 --out out\predators
+python scripts\plot_experiments.py   # charts from the experiment CSVs
 ```
 
 ## Limitations
@@ -167,6 +221,8 @@ Stated up front so results are read in the right light:
 - Simulated tails are milder and volatility clustering shorter-lived than in real
   markets (see [validation](docs/validation.md#limitations)).
 - Benchmarks measure the matching engine alone, on a synthetic workload.
+- Experiment results describe mechanisms in a simplified market, not real-world
+  magnitudes; the circuit-breaker model is a simplification of the real rule.
 
 ## Layout
 
@@ -180,8 +236,9 @@ apps/demo.cpp         walk-through of a sweep and a market order
 apps/sim.cpp          run a simulated trading day, write CSVs
 apps/validate.cpp     stylized-facts validation and ablation runs
 apps/evolve.cpp       evolve strategies and test them on held-out days
+apps/experiments.cpp  algorithmic share, herding and circuit-breaker experiments
 scripts/              chart generation (Python)
 bench/                workload generator and benchmark
 tests/                unit, fuzz, simulation, statistics and evolution tests
-docs/                 benchmark, simulation, validation and evolution write-ups
+docs/                 benchmark, simulation, validation, evolution and experiment write-ups
 ```

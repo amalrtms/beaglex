@@ -90,13 +90,67 @@ void Simulation::process(const Event& e) {
     }
 }
 
+Simulation::BandResult Simulation::apply_price_band(NewOrder order, AgentId agent) {
+    const PriceBandConfig& band = config_.price_band;
+    if (!band.enabled || now_ < band.reference_lag) {
+        return {order, false};
+    }
+    const auto reference = view_at(now_ - band.reference_lag).mid();
+    if (!reference) {
+        return {order, false};
+    }
+    const auto upper = static_cast<Price>(std::floor(*reference * (1.0 + band.width)));
+    const auto lower = static_cast<Price>(std::ceil(*reference * (1.0 - band.width)));
+
+    // A breach: the order would trade against a market already beyond the band.
+    const NewOrder original = order;
+    const bool market_order = order.type == OrderType::Market;
+    bool breach = false;
+    if (order.side == Side::Buy) {
+        const auto ask = book_.best_ask();
+        breach = ask && *ask > upper && (market_order || original.price >= *ask);
+        if (market_order) {
+            order.type = OrderType::ImmediateOrCancel;
+            order.price = upper;
+        } else {
+            order.price = std::min(order.price, upper);
+        }
+    } else {
+        const auto bid = book_.best_bid();
+        breach = bid && *bid < lower && (market_order || original.price <= *bid);
+        if (market_order) {
+            order.type = OrderType::ImmediateOrCancel;
+            order.price = lower;
+        } else {
+            order.price = std::max(order.price, lower);
+        }
+    }
+    if (breach || (!market_order && order.price != original.price)) {
+        ++band_adjusted_;
+        ++agents_[agent].band_adjusted;
+    }
+    return {order, breach};
+}
+
 void Simulation::on_order_arrival(const Event& e) {
-    const SubmitResult r = book_.submit(e.order);
+    if (now_ < halted_until_) {
+        ++orders_rejected_in_halt_;
+        return;
+    }
+    const BandResult banded = apply_price_band(e.order, e.agent);
+    if (banded.breach && config_.price_band.halt_duration > 0) {
+        // Limit up-limit down: pause trading instead of executing beyond the band.
+        halted_until_ = now_ + config_.price_band.halt_duration;
+        ++halts_;
+        return;
+    }
+    const NewOrder& order = banded.order;
+    const SubmitResult r = book_.submit(order);
     if (!r.accepted()) {
         return;
     }
 
-    Qty taker_remaining = e.order.qty;
+    Qty taker_remaining = order.qty;
     for (std::size_t i = 0; i < r.trades.size(); ++i) {
         const Trade& t = r.trades[i];
         taker_remaining -= t.qty;
