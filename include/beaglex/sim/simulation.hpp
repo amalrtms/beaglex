@@ -81,10 +81,27 @@ public:
     Simulation& operator=(const Simulation&) = delete;
 
     // Adds an agent with a one-way latency to the exchange. Orders, fills and
-    // market data are all delayed by it.
+    // market data are all delayed by it. Agents added after start() join the
+    // market immediately.
     AgentId add_agent(std::unique_ptr<Agent> agent, Time latency);
 
+    // Runs the whole day: start() then advance_to(duration).
     void run();
+
+    // Stepwise running, for driving the simulation interactively. start()
+    // must be called once before advance_to(), which processes every event up
+    // to and including time t and returns false once the day is over.
+    void start();
+    bool advance_to(Time t);
+    bool started() const noexcept { return started_; }
+    Time now() const noexcept { return now_; }
+
+    // Live interventions. A news shock moves the fundamental by `log_return`
+    // from the current second onwards; agents learn of it through their
+    // delayed view, like any other news.
+    void shock_fundamental(double log_return);
+    void set_price_band(const PriceBandConfig& band) { config_.price_band = band; }
+    bool halted() const noexcept { return now_ < halted_until_; }
 
     const SimConfig& config() const noexcept { return config_; }
     std::size_t agent_count() const noexcept { return agents_.size(); }
@@ -152,6 +169,7 @@ private:
     std::uint64_t next_seq_ = 0;
     OrderId next_order_id_ = 1;
     Time now_ = 0;
+    bool started_ = false;
     std::optional<Price> last_trade_;
     Money exchange_revenue_ = 0;
     std::size_t events_ = 0;

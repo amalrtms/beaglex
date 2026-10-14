@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <functional>
 #include <memory>
 #include <utility>
@@ -199,6 +200,53 @@ TEST(Simulation, SameSeedSameMarket) {
     EXPECT_EQ(a->trades(), b->trades());
     EXPECT_EQ(a->events_processed(), b->events_processed());
     EXPECT_NE(a->trades(), c->trades());
+}
+
+TEST(Simulation, SteppingMatchesRun) {
+    Simulation whole(short_config(7, 30 * kMinute));
+    add_population(whole, PopulationConfig{});
+    whole.run();
+
+    Simulation stepped(short_config(7, 30 * kMinute));
+    add_population(stepped, PopulationConfig{});
+    stepped.start();
+    Time t = 0;
+    while (stepped.advance_to(t += 7 * kSecond + 123)) {
+    }
+
+    EXPECT_EQ(whole.trades(), stepped.trades());
+    EXPECT_EQ(whole.events_processed(), stepped.events_processed());
+    EXPECT_EQ(whole.samples().size(), stepped.samples().size());
+}
+
+TEST(Simulation, AgentsCanJoinMidDay) {
+    Simulation sim(short_config(3, 20 * kMinute));
+    add_population(sim, PopulationConfig{});
+    sim.start();
+    sim.advance_to(10 * kMinute);
+    const AgentId late = sim.add_agent(std::unique_ptr<Agent>(new ScriptedAgent({{0, [](AgentContext& c) {
+                                           c.submit(Side::Buy, OrderType::Market, 0, 100);
+                                       }}})),
+                                       kMillisecond);
+    sim.advance_to(20 * kMinute);
+
+    EXPECT_EQ(sim.account(late).position, 100);
+    for (const auto& t : sim.trades()) {
+        if (t.taker == late) {
+            EXPECT_GE(t.time, 10 * kMinute);
+        }
+    }
+}
+
+TEST(Simulation, NewsShockMovesFundamental) {
+    Simulation sim(short_config(3, 20 * kMinute));
+    sim.start();
+    sim.advance_to(10 * kMinute);
+    const double before = sim.fundamental_at(10 * kMinute);
+    const double earlier = sim.fundamental_at(5 * kMinute);
+    sim.shock_fundamental(0.02);
+    EXPECT_NEAR(sim.fundamental_at(10 * kMinute), before * std::exp(0.02), 1e-9);
+    EXPECT_EQ(sim.fundamental_at(5 * kMinute), earlier);
 }
 
 TEST(Simulation, ConservesSharesAndCash) {

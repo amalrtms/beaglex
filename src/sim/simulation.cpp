@@ -33,7 +33,20 @@ Simulation::Simulation(const SimConfig& config) : config_(config) {
 
 AgentId Simulation::add_agent(std::unique_ptr<Agent> agent, Time latency) {
     agents_.push_back(Slot{std::move(agent), latency, {}});
-    return static_cast<AgentId>(agents_.size() - 1);
+    const auto id = static_cast<AgentId>(agents_.size() - 1);
+    if (started_) {
+        AgentContext ctx(*this, id);
+        agents_[id].agent->on_start(ctx);
+    }
+    return id;
+}
+
+void Simulation::shock_fundamental(double log_return) {
+    const double factor = std::exp(log_return);
+    const auto from = static_cast<std::size_t>(std::clamp<Time>(now_ / kSecond, 0, static_cast<Time>(fundamental_.size())));
+    for (std::size_t i = from; i < fundamental_.size(); ++i) {
+        fundamental_[i] *= factor;
+    }
 }
 
 double Simulation::fundamental_at(Time t) const {
@@ -47,15 +60,24 @@ void Simulation::schedule(Event e) {
 }
 
 void Simulation::run() {
+    start();
+    advance_to(config_.duration);
+}
+
+void Simulation::start() {
+    started_ = true;
     for (AgentId id = 0; id < agents_.size(); ++id) {
         AgentContext ctx(*this, id);
         agents_[id].agent->on_start(ctx);
     }
     schedule(Event{.time = 0, .kind = EventKind::Sample});
+}
 
+bool Simulation::advance_to(Time t) {
+    const Time limit = std::min(t, config_.duration);
     while (!queue_.empty()) {
         Event e = queue_.top();
-        if (e.time > config_.duration) {
+        if (e.time > limit) {
             break;
         }
         queue_.pop();
@@ -63,6 +85,10 @@ void Simulation::run() {
         ++events_;
         process(e);
     }
+    if (limit > now_) {
+        now_ = limit; // idle stretch: the clock still moves
+    }
+    return t < config_.duration && !queue_.empty();
 }
 
 void Simulation::process(const Event& e) {
